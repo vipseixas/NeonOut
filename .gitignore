@@ -1,2 +1,17 @@
+# Build
+*.jar
 *.class
 *.log
+target/
+.scala-build/
+
+# IDEs
+.bloop/
+.idea/
+.bsp/
+.vscode/
+.metals/
+project/
+
+# Other
+temp/
