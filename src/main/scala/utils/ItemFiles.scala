@@ -34,12 +34,12 @@ object ItemFiles {
 		val metaStr = os.read(metaFilename(piece))
 		return PieceDetail(piece, JsonObject(metaStr))
 
-	private def itemPath(item: Item): Path = basePath / item.parent.slug
-
-	private def basePath: Path =
+	def basePath: Path =
 		rootPath match
 			case Some(path) => path
 			case None => findBasePath
+
+	private def itemPath(item: Item): Path = basePath / item.parent.slug
 
 	private def findBasePath: Path =
 		rootPath = os.exists(os.home / "Documents") match

@@ -7,6 +7,8 @@ import utils.{ItemFiles, NeonApi}
 @main
 def main(userId: Long, settId: Long): Unit =
 
+	println(s"=== Collections directory: ${ItemFiles.basePath}")
+
 	val neonApi = NeonApi(userId)
 
 	neonApi.fetchSettList(userId) match
