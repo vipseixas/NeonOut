@@ -1,8 +1,6 @@
 # NeonOut
 
-***NeonOut*** is a program that enables NeonMob users to download and keep theirs collections after NeonMob gets out of business, which is planned to take place at 2023-02-28.
-
-It is written in Scala 3 and can be executed using [SBT](https://www.scala-sbt.org/) or [scala-cli](https://scala-cli.virtuslab.org/).
+***NeonOut*** is a Scala 3 program that enables NeonMob users to download and keep theirs collections after NeonMob gets out of business, which is planned to take place at 2023-02-28.
 
 For the non-technical people there are pre-built executable scritps (*NeonOut.cmd* for **Windows**; *NeonOut.sh* for **MacOS** and **Linux**) at the [releases page](https://github.com/vipseixas/NeonOut/releases/).
 
@@ -12,11 +10,17 @@ You'll need Java 11+ installed in your system to run these executables, I recomm
 
 ## Running
 
-The executable runs on a terminal (*cmd.exe* for Windows or *bash* for Linux/MacOS) and accepts 2 parameters, the UserID and the SettID (Sett is how a Collection is named by NM API). Both parameters are mandatory but SettID can be *0* indicating that all collections are to be downloaded.
+The executable runs on a terminal (*cmd.exe* for Windows or *bash* for Linux/MacOS) and accepts 2 parameters, the UserID and the SettID (Sett is how a Collection is named internally by NeonMob). Both parameters are mandatory but SettID can be *0* indicating that all collections must to be downloaded. 
 
-Example:
+Just open a terminal on the directory where you downloaded the executable and run it like this: 
+
+For Windows:
 
 > NeonOut.cmd 987654 0
+
+For Mac/Linux:
+
+> ./NeonOut.sh 987654 0
 
 ## How do I find my NeonMob UserID?
 
