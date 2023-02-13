@@ -1,24 +1,41 @@
 package io.pixel
 package utils
 
-import spray.json.DefaultJsonProtocol.*
+import io.pixel.model.*
+import io.pixel.utils.ApiRequest
+import io.pixel.utils.json.*
 import spray.json.*
+import spray.json.DefaultJsonProtocol.*
 import sttp.client3.*
 import sttp.model.*
 
-import model.*
-import utils.ApiGuard
-import utils.json.*
+import scala.annotation.tailrec
+import scala.util.control.Exception.allCatch
+import scala.util.{Failure, Success, Try}
 
 
-class NeonApi(val userId: Long) {
+class NeonApi(val userName: String) {
 
-	private val backend = HttpClientSyncBackend()
-
-	private val apiUri = "https://www.neonmob.com/api"
+	private val wwwUri = "https://www.neonmob.com"
+	private val apiUri = s"$wwwUri/api"
 	private val napiUri = "https://napi.neonmob.com"
 
-	def fetchSettList(userId: Long): Either[String, Vector[Sett]] =
+	private val userId: Long = findUserId();
+
+	println(s"=== Found user $userName with userId $userId")
+
+	private val itemFiles = ItemFiles(userId)
+
+	def fetchUserDetails(): Unit =
+		val userUri = uri"$apiUri/users/$userId"
+		val response = ApiRequest.sendRequest(userUri)
+
+		response.toSeq
+			.map(str => JsonObject(str))
+			.tapEach(itemFiles.writeUserMetadata(userName, _))
+
+
+	def fetchSettList(): Either[String, Vector[Sett]] =
 		var results: Either[String, Vector[JsonObject]] = Right(Vector.empty[JsonObject])
 
 		var uri = Option(uri"$apiUri/user/collections/$userId/?last_acquired=desc")
@@ -26,15 +43,7 @@ class NeonApi(val userId: Long) {
 		println(f"=== Fetching Setts for user $userId")
 
 		while uri.isDefined && results.isRight do
-			println(f" == Fetching from URL ${uri.get}")
-
-			ApiGuard.checkRequestWait()
-			val response = basicRequest
-				.get(uri.get)
-				.send(backend)
-
-			val json = response.body
-				.map(JsonObject(_))
+			val json = fetchCollectionPage(uri.get)
 
 			results = json
 				.flatMap(j => j.getObjectArray("results"))
@@ -46,22 +55,46 @@ class NeonApi(val userId: Long) {
 			println(f"=== Found ${settJson.length} Setts for user $userId")
 			settJson
 				.map(obj => Sett(obj))
-				.tapEach(sett => ItemFiles.writeMetadata(sett))
+				.tapEach(sett => itemFiles.writeMetadata(sett))
 		}
 
 
-	def fetchPieces(sett: Sett): Either[String, Vector[Piece]] =
-		ApiGuard.checkRequestWait()
-		val piecesUri = uri"$napiUri/user/$userId/sett/${sett.id}"
-		val response = basicRequest
-			.get(piecesUri)
-			.send(backend)
+	private def fetchCollectionPage(uri: Uri): Either[String, JsonObject] =
+		val page = """&page=(\d+)""".r
+			.findFirstMatchIn(uri.toString)
+			.map(m => m.group(1).toInt)
+			.getOrElse(1)
 
-		return response.body
+		println(s" == Loading collections page ${page}")
+
+		itemFiles.loadCollectionPage(page)
+			.map(json => Right(json))
+			.getOrElse {
+				println(s" == Fetching from URL ${uri}")
+
+				val response = ApiRequest.sendRequest(uri)
+
+				response.toSeq
+					.map(JsonObject(_))
+					.tapEach(itemFiles.writeCollectionMetadata(page, _))
+					.map(Right(_))
+					.head
+			}
+
+
+	def fetchPieces(sett: Sett): Either[String, Vector[Piece]] =
+		val piecesUri = uri"$napiUri/user/$userId/sett/${sett.id}"
+		val response = ApiRequest.sendRequest(piecesUri)
+
+		return response
 			.flatMap(JsonArray(_).value)
 			.map(array => array.map(Piece(sett, _)))
 
+
 	def fetchDetail(piece: Piece): Option[PieceDetail] =
+		if itemFiles.hasMetadata(piece) then
+			return Some(itemFiles.loadPieceDetail(piece))
+
 		val detailObj = fetchPieceDetail(piece)
 
 		val detailDef = detailObj
@@ -75,8 +108,41 @@ class NeonApi(val userId: Long) {
 				None
 			case Right(detailDef) =>
 				val pieceDetail = PieceDetail(piece, detailDef)
-				ItemFiles.writeMetadata(pieceDetail)
+				itemFiles.writeMetadata(pieceDetail)
 				Option(pieceDetail)
+
+
+	def downloadAsset(asset: Asset): Boolean =
+		if itemFiles.assetExists(asset) then
+			return false
+
+		val response = ApiRequest.downloadBinary(asset.uri)
+		itemFiles.writeAsset(asset, response.body)
+
+		return true
+
+
+	private def findUserId(): Long =
+		val collectionUri = uri"$wwwUri/$userName/collection"
+		val response = ApiRequest.sendRequest(collectionUri)
+
+		val userId = response match
+			case Right(str) => parseUserId(str)
+			case Left(_) => None
+
+		userId match
+			case Some(userId) => userId
+			case None =>
+				println(s"ERROR: userId not found for username $userName")
+				scala.sys.exit()
+
+
+	private def parseUserId(body: String) =
+		val pattern = "targetId:\\s*(\\d+),".r
+
+		pattern.findFirstMatchIn(body) match
+			case Some(pattMatch) => Option(pattMatch.group(1).toLong)
+			case _ => None
 
 
 	private def nextUri(json: JsonObject): Option[Uri] =
@@ -92,39 +158,58 @@ class NeonApi(val userId: Long) {
 	private def fetchPieceDetail(piece: Piece): Either[String, JsonObject] =
 		println(f"  = Fetching details for $piece")
 
-		ApiGuard.checkRequestWait()
 		val detailUri = uri"$apiUri/users/$userId/piece/${piece.id}/detail/"
-		val response = basicRequest
-			.get(detailUri)
-			.send(backend)
+		val response = ApiRequest.sendRequest(detailUri)
 
-		response.body
-			.map(JsonObject(_))
+		response.map(JsonObject(_))
+
 }
 
-object NeonApi {
+object ApiRequest {
+	private val maxSequentialRequests = 10
+	private val requestSleep = 2000
+	private var requestCounter: Int = maxSequentialRequests
+
+	private val maxRetries: Int = 5
+	private val retryInterval: Int = 10
+
 	private val backend = HttpClientSyncBackend()
 
-	def downloadAsset(asset: Asset): Array[Byte] =
-		ApiGuard.checkRequestWait()
-		val response = basicRequest
-			.get(asset.uri)
+	@tailrec
+	def sendRequest(uri: Uri, retry: Int = 0): Either[String, String] =
+		checkRequestWait()
+
+		allCatch.withTry {
+			basicRequest.get(uri).send(backend)
+		} match
+			case Success(response) =>
+				if response.code.isSuccess then
+					response.body
+				else
+					Left(s"${response.code}: ${response.statusText}")
+			case Failure(e) =>
+				print(s"### Error fetching $uri: ${e.getMessage}. ")
+				if retry < maxRetries then
+					println(s"Retrying again in $retryInterval seconds...")
+					Thread.sleep(retryInterval * 1000)
+					sendRequest(uri, retry + 1)
+				else
+					println(s"Giving up after $retry retries.")
+					Left(e.getMessage)
+
+	def downloadBinary(uri: Uri) =
+		// The assets come from cloudfront and so we will not restrict throughput
+		basicRequest
+			.get(uri)
 			.response(asByteArrayAlways)
 			.send(backend)
 
-		return response.body
-}
-
-object ApiGuard {
-	private val maxSequentialRequests = 10
-	private val requestSleep = 5000
-	private var requestCounter: Int = maxSequentialRequests
-
-	def checkRequestWait(): Unit =
+	private def checkRequestWait(): Unit =
 		requestCounter -= 1
+
 		if requestCounter <= 0 then
 			println("--- Sleeping a little ---")
 			Thread.sleep(requestSleep)
 			requestCounter = maxSequentialRequests
-}
 
+}
