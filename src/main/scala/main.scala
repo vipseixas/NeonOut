@@ -1,26 +1,26 @@
 package io.pixel
 
-import model.{Piece, PieceDetail, Sett}
-import utils.{ItemFiles, NeonApi}
+import io.pixel.model.{Piece, PieceDetail, Sett}
+import io.pixel.utils.{ItemFiles, NeonApi}
+
+import scala.io.StdIn
 
 
 @main
-def main(userId: Long, settId: Long): Unit =
+def main(): Unit =
 
-	println(s"=== Collections directory: ${ItemFiles.basePath}")
+	val username = StdIn.readLine("NeonMob username: ")
 
-	val neonApi = NeonApi(userId)
+	val neonApi = NeonApi(username)
 
-	neonApi.fetchSettList(userId) match
-		case Right(settList) if settId > 0 =>
-			settList
-				.filter(sett => sett.id == settId)
-				.take(1)
-				.foreach(processSett)
-		case Right(settList) if settId == 0 =>
-			settList.foreach(processSett)
-		case error =>
-			println(f"Error: $error")
+	neonApi.fetchUserDetails()
+
+	neonApi.fetchSettList() match
+		case Right(settList) => settList
+			.sortBy(_.name)
+			.foreach(processSett)
+		case Left(error) => println(f"Error: $error")
+
 
 	def processSett(sett: Sett): Unit =
 		println(f"=== Processing $sett")
@@ -29,15 +29,9 @@ def main(userId: Long, settId: Long): Unit =
 		var skipped = 0
 
 		sett.assets foreach { asset =>
-			ItemFiles.assetExists(asset) match
-				case true =>
-//					println(s"  = Skipping asset $asset")
-					skipped += 1
-				case false =>
-//					println(s"  = Downloading asset $asset")
-					val assetBytes = NeonApi.downloadAsset(asset)
-					ItemFiles.writeAsset(asset, assetBytes)
-					loaded += 1
+			neonApi.downloadAsset(asset) match
+				case true => loaded += 1
+				case false => skipped += 1
 		}
 
 		println(s" == Downloaded $loaded and skipped $skipped assets for $sett")
@@ -50,32 +44,23 @@ def main(userId: Long, settId: Long): Unit =
 				pieces.foreach(processPiece)
 
 
-	def processPiece(piece: Piece) =
+	def processPiece(piece: Piece): Unit =
 		println(f" == Processing $piece")
 
-		// The metadata is only written after the details are created
-		val detail = ItemFiles.hasMetadata(piece) match
-			case true => Option(ItemFiles.loadPieceDetail(piece))
-			case false => neonApi.fetchDetail(piece)
+		val detail = neonApi.fetchDetail(piece)
 
 		for { detail <- detail }
 			processDetail(detail)
 
 
-	def processDetail(detail: PieceDetail) =
+	def processDetail(detail: PieceDetail): Unit =
 		var loaded = 0
 		var skipped = 0
 
 		detail.assets foreach { asset =>
-			ItemFiles.assetExists(asset) match
-				case true =>
-//					println(s"Skipping Asset $asset")
-					skipped += 1
-				case false =>
-//					println(s"Downloading Asset $asset")
-					val assetBytes = NeonApi.downloadAsset(asset)
-					ItemFiles.writeAsset(asset, assetBytes)
-					loaded += 1
+			neonApi.downloadAsset(asset) match
+				case true => loaded += 1
+				case false => skipped += 1
 		}
 
 		println(s"  = Downloaded $loaded and skipped $skipped assets for $detail")
