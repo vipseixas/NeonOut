@@ -21,7 +21,7 @@ class NeonApi(val userName: String) {
 
 	private val userId: Long = findUserId();
 
-	private val itemFiles = ItemFiles(userId, true)
+	private val itemFiles = ItemFiles(userId)
 
 	def fetchUserDetails(): Unit =
 		val userUri = uri"$apiUri/users/$userId"
