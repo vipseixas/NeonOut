@@ -1,7 +1,7 @@
 package io.pixel
 package model
 
-import utils.json.JsonObject
+import io.pixel.utils.json.JsonObject
 
 abstract class Item {
 
@@ -9,7 +9,7 @@ abstract class Item {
 
 	def id: Long = definition.getLong("id").getOrElse(-1)
 
-	def name: String = definition.getString("name").getOrElse("#error")
+	def name: String = definition.getString("name").getOrElse("#error").trim
 
 	def prefix: String = ""
 

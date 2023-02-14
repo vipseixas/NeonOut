@@ -1,8 +1,8 @@
 package io.pixel
 package utils.json
 
-import spray.json.DefaultJsonProtocol.*
 import spray.json.*
+import spray.json.DefaultJsonProtocol.*
 
 
 class JsonObject(json: String) {
@@ -45,6 +45,12 @@ class JsonObject(json: String) {
 			.getOrElse(Map.empty)
 		JsonObject(JsObject(newFields).toString)
 
+	def keepFields(fields: Array[String]): JsonObject =
+		val newFields = asObject
+			.map(_.fields.filter((k, _) => fields.contains(k)))
+			.getOrElse(Map.empty)
+		JsonObject(JsObject(newFields).toString)
+
 	override def toString: String = rootObject.prettyPrint
 
 	private def asObject: Option[JsObject] = rootObject match
@@ -55,4 +61,10 @@ class JsonObject(json: String) {
 		asObject
 			.map(o => o.fields)
 			.getOrElse(Map.empty)
+}
+
+object JsonObject {
+	def toArray(vector: Vector[JsonObject]): JsonArray =
+		val jsArray = JsArray(vector.map(obj => obj.rootObject))
+		JsonArray(jsArray.toString)
 }

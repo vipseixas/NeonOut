@@ -11,7 +11,7 @@ import sttp.model.*
 
 import scala.annotation.tailrec
 import scala.util.control.Exception.allCatch
-import scala.util.{Failure, Success, Try}
+import scala.util.{DynamicVariable, Failure, Success, Try}
 
 
 class NeonApi(val userName: String) {
@@ -22,9 +22,7 @@ class NeonApi(val userName: String) {
 
 	private val userId: Long = findUserId();
 
-	println(s"=== Found user $userName with userId $userId")
-
-	private val itemFiles = ItemFiles(userId)
+	private val itemFiles = ItemFiles(userId, true)
 
 	def fetchUserDetails(): Unit =
 		val userUri = uri"$apiUri/users/$userId"
@@ -40,8 +38,6 @@ class NeonApi(val userName: String) {
 
 		var uri = Option(uri"$apiUri/user/collections/$userId/?last_acquired=desc")
 
-		println(f"=== Fetching Setts for user $userId")
-
 		while uri.isDefined && results.isRight do
 			val json = fetchCollectionPage(uri.get)
 
@@ -52,7 +48,6 @@ class NeonApi(val userName: String) {
 			uri = json.map(nextUri).getOrElse(None)
 
 		results map { settJson =>
-			println(f"=== Found ${settJson.length} Setts for user $userId")
 			settJson
 				.map(obj => Sett(obj))
 				.tapEach(sett => itemFiles.writeMetadata(sett))
@@ -65,13 +60,9 @@ class NeonApi(val userName: String) {
 			.map(m => m.group(1).toInt)
 			.getOrElse(1)
 
-		println(s" == Loading collections page ${page}")
-
 		itemFiles.loadCollectionPage(page)
 			.map(json => Right(json))
 			.getOrElse {
-				println(s" == Fetching from URL ${uri}")
-
 				val response = ApiRequest.sendRequest(uri)
 
 				response.toSeq
@@ -83,12 +74,26 @@ class NeonApi(val userName: String) {
 
 
 	def fetchPieces(sett: Sett): Either[String, Vector[Piece]] =
-		val piecesUri = uri"$napiUri/user/$userId/sett/${sett.id}"
-		val response = ApiRequest.sendRequest(piecesUri)
+		val piecesArray =
+			if (itemFiles.hasSettPieces(sett)) then
+				Right(itemFiles.loadSettPieces(sett))
+			else
+				val piecesUri = uri"$napiUri/user/$userId/sett/${sett.id}"
+				val response = ApiRequest.sendRequest(piecesUri)
+				response.map(JsonArray(_))
 
-		return response
-			.flatMap(JsonArray(_).value)
+		piecesArray
+			.flatMap(_.value)
 			.map(array => array.map(Piece(sett, _)))
+
+
+	def piecesFinished(sett: Sett, pieces: Vector[Piece]): Unit =
+		val piecesVetor = pieces
+			.map(p => p.definition.keepFields(Array("id", "name")))
+
+		val jsonArray = JsonObject.toArray(piecesVetor)
+
+		itemFiles.writeSettPieces(sett, jsonArray)
 
 
 	def fetchDetail(piece: Piece): Option[PieceDetail] =
@@ -102,9 +107,11 @@ class NeonApi(val userName: String) {
 			.map((obj, array) => (obj, array(1)))
 			.flatMap((obj, key) => obj.fields("refs").getObject(key).toRight("Key not found"))
 
-		detailDef.map(detailDef => detailDef.setFields(extractFields(piece))) match
+		// To hydrate the details map with info from the piece map
+		val overlayFields = Array("own_count", "rarity")
+		detailDef.map(detailDef => detailDef.setFields(extractFields(piece, overlayFields))) match
 			case Left(error) =>
-				println(s"Error fetching details for $piece: $error")
+				println(s"\n## ERROR fetching details for $piece: $error")
 				None
 			case Right(detailDef) =>
 				val pieceDetail = PieceDetail(piece, detailDef)
@@ -114,12 +121,14 @@ class NeonApi(val userName: String) {
 
 	def downloadAsset(asset: Asset): Boolean =
 		if itemFiles.assetExists(asset) then
+			print(".")
 			return false
 
 		val response = ApiRequest.downloadBinary(asset.uri)
 		itemFiles.writeAsset(asset, response.body)
+		print("+")
 
-		return true
+		true
 
 
 	private def findUserId(): Long =
@@ -131,9 +140,11 @@ class NeonApi(val userName: String) {
 			case Left(_) => None
 
 		userId match
-			case Some(userId) => userId
+			case Some(userId) =>
+				println(s"== Found user $userName with userId $userId")
+				userId
 			case None =>
-				println(s"ERROR: userId not found for username $userName")
+				println(s"\n## ERROR userId not found for username $userName")
 				scala.sys.exit()
 
 
@@ -149,15 +160,11 @@ class NeonApi(val userName: String) {
 		json.getString("next").map(v => uri"$v")
 
 
-	private def extractFields(piece: Piece): Map[String, JsonObject] =
-		// To hydrate the details map with info from the piece map
-		val overlayFields = Array("own_count", "rarity")
-		piece.definition.fields.filter((k, _) => overlayFields.contains(k))
+	private def extractFields(piece: Piece, fields: Array[String]): Map[String, JsonObject] =
+		piece.definition.fields.filter((k, _) => fields.contains(k))
 
 
 	private def fetchPieceDetail(piece: Piece): Either[String, JsonObject] =
-		println(f"  = Fetching details for $piece")
-
 		val detailUri = uri"$apiUri/users/$userId/piece/${piece.id}/detail/"
 		val response = ApiRequest.sendRequest(detailUri)
 
@@ -173,14 +180,14 @@ object ApiRequest {
 	private val maxRetries: Int = 5
 	private val retryInterval: Int = 10
 
-	private val backend = HttpClientSyncBackend()
+	private val backend: ThreadLocal[SttpBackend[Identity, Any]] = ThreadLocal.withInitial(() => HttpClientSyncBackend())
 
 	@tailrec
 	def sendRequest(uri: Uri, retry: Int = 0): Either[String, String] =
 		checkRequestWait()
 
 		allCatch.withTry {
-			basicRequest.get(uri).send(backend)
+			basicRequest.get(uri).send(backend.get)
 		} match
 			case Success(response) =>
 				if response.code.isSuccess then
@@ -188,9 +195,9 @@ object ApiRequest {
 				else
 					Left(s"${response.code}: ${response.statusText}")
 			case Failure(e) =>
-				print(s"### Error fetching $uri: ${e.getMessage}. ")
+				print(s"\n## Error fetching API: ${e.getMessage}. ")
 				if retry < maxRetries then
-					println(s"Retrying again in $retryInterval seconds...")
+					println(s"Retrying in $retryInterval seconds...")
 					Thread.sleep(retryInterval * 1000)
 					sendRequest(uri, retry + 1)
 				else
@@ -202,13 +209,12 @@ object ApiRequest {
 		basicRequest
 			.get(uri)
 			.response(asByteArrayAlways)
-			.send(backend)
+			.send(backend.get)
 
 	private def checkRequestWait(): Unit =
 		requestCounter -= 1
 
 		if requestCounter <= 0 then
-			println("--- Sleeping a little ---")
 			Thread.sleep(requestSleep)
 			requestCounter = maxSequentialRequests
 
