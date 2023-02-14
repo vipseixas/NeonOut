@@ -1,7 +1,6 @@
-package io.pixel
-package utils.json
+package io.pixel.utils
+package json
 
-import io.pixel.utils.json.JsonObject
 import spray.json.*
 
 
