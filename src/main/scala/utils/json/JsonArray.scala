@@ -1,9 +1,8 @@
 package io.pixel
 package utils.json
 
+import io.pixel.utils.json.JsonObject
 import spray.json.*
-
-import utils.json.JsonObject
 
 
 class JsonArray(json: String) {
@@ -14,4 +13,5 @@ class JsonArray(json: String) {
 		case JsArray(array) => Right(array.map(i => JsonObject(i.toString)))
 		case _ => Left("Object is not an array")
 
+	override def toString: String = rootObject.prettyPrint
 }
