@@ -1,10 +1,9 @@
 package io.pixel
 package model
 
+import io.pixel.utils.json.JsonObject
 import sttp.client3.*
 import sttp.model.*
-
-import utils.json.JsonObject
 
 
 case class Asset(item: Item, name: String, url: String, width: Int = 0, height: Int = 0) {

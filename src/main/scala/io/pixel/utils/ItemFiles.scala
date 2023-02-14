@@ -2,7 +2,7 @@ package io.pixel
 package utils
 
 import io.pixel.model.*
-import io.pixel.utils.json.*
+import io.pixel.model.utils.json.*
 import os.Path
 import sttp.model.Uri
 

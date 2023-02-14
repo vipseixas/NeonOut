@@ -1,5 +1,5 @@
-package io.pixel
-package utils.json
+package io.pixel.utils
+package json
 
 import spray.json.*
 import spray.json.DefaultJsonProtocol.*

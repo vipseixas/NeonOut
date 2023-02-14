@@ -2,7 +2,6 @@ package io.pixel
 package utils
 
 import io.pixel.model.*
-import io.pixel.utils.ApiRequest
 import io.pixel.utils.json.*
 import spray.json.*
 import spray.json.DefaultJsonProtocol.*

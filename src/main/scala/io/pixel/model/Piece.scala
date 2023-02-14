@@ -1,8 +1,8 @@
 package io.pixel
 package model
 
-import model.{Item, Sett}
-import utils.json.JsonObject
+import io.pixel.model.{Item, Sett}
+import io.pixel.utils.json.JsonObject
 
 
 case class Piece(sett: Sett, definition: JsonObject) extends Item {

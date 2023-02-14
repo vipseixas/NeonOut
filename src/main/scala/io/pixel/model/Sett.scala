@@ -1,8 +1,8 @@
 package io.pixel
 package model
 
-import utils.json.JsonObject
-import utils.{ItemFiles, NeonApi}
+import io.pixel.utils.json.JsonObject
+import io.pixel.utils.{ItemFiles, NeonApi}
 
 
 case class Sett(definition: JsonObject) extends Item {
