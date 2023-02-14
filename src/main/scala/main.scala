@@ -3,6 +3,7 @@ package io.pixel
 import io.pixel.model.{Piece, PieceDetail, Sett}
 import io.pixel.utils.{ItemFiles, NeonApi}
 
+import scala.collection.parallel.CollectionConverters.*
 import scala.io.StdIn
 
 
@@ -13,54 +14,50 @@ def main(): Unit =
 
 	val neonApi = NeonApi(username)
 
+	println(s"== Loading user details for $username")
+
 	neonApi.fetchUserDetails()
 
+	println(s"== Loading Collections for $username")
+
 	neonApi.fetchSettList() match
-		case Right(settList) => settList
-			.sortBy(_.name)
-			.foreach(processSett)
+		case Right(list) => processSettList(list)
 		case Left(error) => println(f"Error: $error")
 
 
+	def processSettList(settList: Vector[Sett]) =
+		println(s"== User $username has ${settList.length} collections")
+		settList
+			.sortBy(_.name)
+			.foreach(processSett)
+
+
 	def processSett(sett: Sett): Unit =
-		println(f"=== Processing $sett")
-
-		var loaded = 0
-		var skipped = 0
-
-		sett.assets foreach { asset =>
-			neonApi.downloadAsset(asset) match
-				case true => loaded += 1
-				case false => skipped += 1
-		}
-
-		println(s" == Downloaded $loaded and skipped $skipped assets for $sett")
-
 		neonApi.fetchPieces(sett) match
 			case Left(error) =>
-				println(s"Error fetching Pieces for $sett: $error")
+				println(s"\n## Error fetching Pieces for $sett: $error")
 			case Right(pieces) =>
-				println(s" == Found ${pieces.length} Pieces for $sett")
-				pieces.foreach(processPiece)
+				println(s"\n== Collection '${sett.name}' has ${pieces.length} cards. Downloading media files...")
+
+				val fromSett = sett.assets
+					.map(neonApi.downloadAsset)
+					.count(r => r)
+
+				val fromPieces = pieces.map(processPiece).sum
+
+				// Write a marker to indicate that all piece details are already downloaded
+				neonApi.piecesFinished(sett, pieces)
+
+//				println(s"\n = Downloaded ${fromSett+fromPieces} media files\n")
 
 
-	def processPiece(piece: Piece): Unit =
-		println(f" == Processing $piece")
-
-		val detail = neonApi.fetchDetail(piece)
-
-		for { detail <- detail }
-			processDetail(detail)
+	def processPiece(piece: Piece): Int =
+		neonApi.fetchDetail(piece)
+			.map(processDetail)
+			.getOrElse(0)
 
 
-	def processDetail(detail: PieceDetail): Unit =
-		var loaded = 0
-		var skipped = 0
-
-		detail.assets foreach { asset =>
-			neonApi.downloadAsset(asset) match
-				case true => loaded += 1
-				case false => skipped += 1
-		}
-
-		println(s"  = Downloaded $loaded and skipped $skipped assets for $detail")
+	def processDetail(detail: PieceDetail): Int =
+		detail.assets.par
+			.map(asset => neonApi.downloadAsset(asset))
+			.count(r => r)
