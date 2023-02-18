@@ -12,7 +12,14 @@ def main(): Unit =
 
 	val username = StdIn.readLine("NeonMob username: ")
 
-	val neonApi = NeonApi(username)
+	var outputPath = ItemFiles.defaultPath
+
+	val pathOption = StdIn.readLine(s"Output path [$outputPath]: ")
+
+	if !pathOption.trim.equals("") then
+		outputPath = os.Path(pathOption)
+
+	val neonApi = NeonApi(username, outputPath)
 
 	println(s"== Loading user details for $username")
 
@@ -28,7 +35,7 @@ def main(): Unit =
 	def processSettList(settList: Vector[Sett]) =
 		println(s"== User $username has ${settList.length} collections")
 		settList
-			.sortBy(_.name)
+			.sortBy(_.name.toLowerCase)
 			.foreach(processSett)
 
 
@@ -48,13 +55,10 @@ def main(): Unit =
 				// Write a marker to indicate that all piece details are already downloaded
 				neonApi.piecesFinished(sett, pieces)
 
-//				println(s"\n = Downloaded ${fromSett+fromPieces} media files\n")
-
 
 	def processPiece(piece: Piece): Int =
-		neonApi.fetchDetail(piece)
-			.map(processDetail)
-			.getOrElse(0)
+		val pieceDetail = neonApi.createPieceDetail(piece)
+		processDetail(pieceDetail)
 
 
 	def processDetail(detail: PieceDetail): Int =

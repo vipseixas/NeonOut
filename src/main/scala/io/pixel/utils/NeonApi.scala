@@ -3,6 +3,7 @@ package utils
 
 import io.pixel.model.*
 import io.pixel.utils.json.*
+import os.Path
 import spray.json.*
 import spray.json.DefaultJsonProtocol.*
 import sttp.client3.*
@@ -13,7 +14,7 @@ import scala.util.control.Exception.allCatch
 import scala.util.{DynamicVariable, Failure, Success, Try}
 
 
-class NeonApi(val userName: String) {
+class NeonApi(val userName: String, val outputPath: Path, newLayout: Boolean = false) {
 
 	private val wwwUri = "https://www.neonmob.com"
 	private val apiUri = s"$wwwUri/api"
@@ -21,7 +22,7 @@ class NeonApi(val userName: String) {
 
 	private val userId: Long = findUserId();
 
-	private val itemFiles = ItemFiles(userId)
+	private val itemFiles = ItemFiles(userId, outputPath, newLayout)
 
 	def fetchUserDetails(): Unit =
 		val userUri = uri"$apiUri/users/$userId"
@@ -53,25 +54,6 @@ class NeonApi(val userName: String) {
 		}
 
 
-	private def fetchCollectionPage(uri: Uri): Either[String, JsonObject] =
-		val page = """&page=(\d+)""".r
-			.findFirstMatchIn(uri.toString)
-			.map(m => m.group(1).toInt)
-			.getOrElse(1)
-
-		itemFiles.loadCollectionPage(page)
-			.map(json => Right(json))
-			.getOrElse {
-				val response = ApiRequest.sendRequest(uri)
-
-				response.toSeq
-					.map(JsonObject(_))
-					.tapEach(itemFiles.writeCollectionMetadata(page, _))
-					.map(Right(_))
-					.head
-			}
-
-
 	def fetchPieces(sett: Sett): Either[String, Vector[Piece]] =
 		val piecesArray =
 			if (itemFiles.hasSettPieces(sett)) then
@@ -95,27 +77,16 @@ class NeonApi(val userName: String) {
 		itemFiles.writeSettPieces(sett, jsonArray)
 
 
-	def fetchDetail(piece: Piece): Option[PieceDetail] =
-		if itemFiles.hasMetadata(piece) then
-			return Some(itemFiles.loadPieceDetail(piece))
-
-		val detailObj = fetchPieceDetail(piece)
-
-		val detailDef = detailObj
-			.flatMap(obj => obj.getStringArray("payload").map(array => (obj, array)))
-			.map((obj, array) => (obj, array(1)))
-			.flatMap((obj, key) => obj.fields("refs").getObject(key).toRight("Key not found"))
-
-		// To hydrate the details map with info from the piece map
-		val overlayFields = Array("own_count", "rarity")
-		detailDef.map(detailDef => detailDef.setFields(extractFields(piece, overlayFields))) match
-			case Left(error) =>
-				println(s"\n## ERROR fetching details for $piece: $error")
-				None
-			case Right(detailDef) =>
-				val pieceDetail = PieceDetail(piece, detailDef)
-				itemFiles.writeMetadata(pieceDetail)
-				Option(pieceDetail)
+	def createPieceDetail(piece: Piece): PieceDetail =
+		itemFiles.loadPieceDetail(piece).getOrElse {
+			fetchPieceDetail(piece).flatMap(mergePieceWithDetail(piece, _).toRight("Invalid metadata")) match
+				case Left(error) =>
+					println(s"## Error fetching data: $error.\nTry again later.")
+					sys.exit
+				case Right(pieceDetail) =>
+					itemFiles.writeMetadata(pieceDetail)
+					pieceDetail
+			}
 
 
 	def downloadAsset(asset: Asset): Boolean =
@@ -155,6 +126,26 @@ class NeonApi(val userName: String) {
 			case _ => None
 
 
+	private def fetchCollectionPage(uri: Uri): Either[String, JsonObject] =
+		val page =
+			"""&page=(\d+)""".r
+				.findFirstMatchIn(uri.toString)
+				.map(m => m.group(1).toInt)
+				.getOrElse(1)
+
+		itemFiles.loadCollectionPage(page)
+			.map(json => Right(json))
+			.getOrElse {
+				val response = ApiRequest.sendRequest(uri)
+
+				response.toSeq
+					.map(JsonObject(_))
+					.tapEach(itemFiles.writeCollectionMetadata(page, _))
+					.map(Right(_))
+					.head
+			}
+
+
 	private def nextUri(json: JsonObject): Option[Uri] =
 		json.getString("next").map(v => uri"$v")
 
@@ -165,9 +156,22 @@ class NeonApi(val userName: String) {
 
 	private def fetchPieceDetail(piece: Piece): Either[String, JsonObject] =
 		val detailUri = uri"$apiUri/users/$userId/piece/${piece.id}/detail/"
-		val response = ApiRequest.sendRequest(detailUri)
 
-		response.map(JsonObject(_))
+		ApiRequest
+			.sendRequest(detailUri)
+			.map(JsonObject(_))
+
+	private def mergePieceWithDetail(piece: Piece, detailObj: JsonObject) =
+		// The key to where the info is located inside the "refs" object
+		// is the 2nd item from the "payload" array
+		val detailDef = detailObj.getStringArray("payload")
+			.map(array => array(1))
+			.flatMap(key => detailObj.fields("refs").getObject(key))
+
+		// To hydrate the details map with info from the piece map
+		detailDef
+			.map(detailDef => detailDef.setFields(extractFields(piece, Array("own_count", "rarity"))))
+			.map(PieceDetail(piece, _))
 
 }
 
@@ -203,7 +207,7 @@ object ApiRequest {
 					println(s"Giving up after $retry retries.")
 					Left(e.getMessage)
 
-	def downloadBinary(uri: Uri) =
+	def downloadBinary(uri: Uri): Identity[Response[Array[Byte]]] =
 		// The assets come from cloudfront and so we will not restrict throughput
 		basicRequest
 			.get(uri)

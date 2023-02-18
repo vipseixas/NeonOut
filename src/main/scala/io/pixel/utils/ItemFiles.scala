@@ -6,17 +6,15 @@ import io.pixel.utils.json.*
 import os.Path
 import sttp.model.Uri
 
+import scala.util.control.Exception.allCatch
 
-case class ItemFiles(userId: Long, newLayout: Boolean = false) {
 
-	private val collectionsSubPath = os.sub / "Collections"
-	private val documentsSubPath = os.sub / "Documents"
+case class ItemFiles(userId: Long, basePath: Path, newLayout: Boolean = false) {
+
 	private val metadataSubPath = os.sub / "metadata"
 	private val imagesSubPath = os.sub / "images"
 
 	private var rootPath: Option[Path] = None
-
-	println(s"== Collections directory: ${basePath}")
 
 
 	def assetExists(asset: Asset): Boolean =
@@ -36,9 +34,18 @@ case class ItemFiles(userId: Long, newLayout: Boolean = false) {
 		os.write.over(filePath, data, createFolders = true)
 
 
-	def loadPieceDetail(piece: Piece): PieceDetail =
-		val metaStr = os.read(itemMetaFilename(piece))
-		return PieceDetail(piece, JsonObject(metaStr))
+	def loadPieceDetail(piece: Piece): Option[PieceDetail] =
+		if !hasMetadata(piece) then
+			return None
+
+		val jsonObject = allCatch.withTry {
+			val metaStr = os.read(itemMetaFilename(piece))
+			JsonObject(metaStr)
+		}
+
+		jsonObject
+			.map(PieceDetail(piece, _))
+			.toOption
 
 
 	def writeCollectionMetadata(page: Int, jsonObject: JsonObject): Unit =
@@ -76,22 +83,9 @@ case class ItemFiles(userId: Long, newLayout: Boolean = false) {
 		JsonArray(os.read(fileName))
 
 
-	private def basePath: Path =
-		rootPath match
-			case Some(path) => path
-			case None => findBasePath
-
 	private def itemPath(item: Item): Path = basePath / item.parent.slug
 
 	private def metadataPath: Path = basePath / "#metadata"
-
-	private def findBasePath: Path =
-		rootPath = os.exists(os.home / "Documents") match
-			case true => Option(os.home / documentsSubPath / collectionsSubPath)
-			case false => Option(os.home / collectionsSubPath)
-
-		return rootPath.get
-
 
 	private def userFilename(userName: String) =
 		metadataPath / "#users" / s"user_${userId}_$userName.json"
@@ -122,4 +116,14 @@ case class ItemFiles(userId: Long, newLayout: Boolean = false) {
 
 		path / s"${item.prefix}${item.slug}_${asset.name}.$extension"
 
+}
+
+object ItemFiles {
+	private val collectionsSubPath = os.sub / "Collections"
+	private val documentsSubPath = os.sub / "Documents"
+
+	def defaultPath: Path =
+		os.exists(os.home / "Documents") match
+			case true => os.home / documentsSubPath / collectionsSubPath
+			case false => os.home / collectionsSubPath
 }
