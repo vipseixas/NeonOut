@@ -24,10 +24,10 @@ class JsonObject(json: String) {
 			case JsObject(obj) => Some(JsonObject(JsObject(obj).toString))
 			case _ => None
 
-	def getObjectArray(fieldName: String): Either[String, Vector[JsonObject]] =
+	def getObjectArray(fieldName: String): Option[Vector[JsonObject]] =
 		objFields.getOrElse(fieldName, JsNull) match
-			case JsArray(array) => Right(array.map(v => JsonObject(v.toString)))
-			case _ => Left(s"$fieldName is not an array")
+			case JsArray(array) => Some(array.map(v => JsonObject(v.toString)))
+			case _ => None
 
 	def getStringArray(fieldName: String): Option[Vector[String]] =
 		objFields.getOrElse(fieldName, JsNull) match

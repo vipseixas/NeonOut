@@ -87,14 +87,14 @@ object Asset {
 
 
 	private def createVideoAsset(item: Item, size: String, obj: JsonObject): Vector[Asset] =
-		obj.getObjectArray("sources") match
-			case Left(_) => Vector.empty[Asset]
-			case Right(sources) => sources flatMap { source =>
+		obj.getObjectArray("sources").map(sources =>
+			sources.flatMap(source =>
 				for {
 					url <- source.getString("url")
 					width <- obj.getLong("width")
 					height <- obj.getLong("height")
 				} yield Asset(item, size, url, width.toInt, height.toInt)
-			}
+			)
+		).getOrElse(Vector.empty)
 
 }

@@ -42,7 +42,7 @@ class NeonApi(val userName: String, val outputPath: Path, newLayout: Boolean = f
 			val json = fetchCollectionPage(uri.get)
 
 			results = json
-				.flatMap(j => j.getObjectArray("results"))
+				.flatMap(j => j.getObjectArray("results").toRight("Error")) //FIXME
 				.flatMap(a => results.map(r => r ++: a))
 
 			uri = json.map(nextUri).getOrElse(None)
@@ -60,8 +60,8 @@ class NeonApi(val userName: String, val outputPath: Path, newLayout: Boolean = f
 				Right(itemFiles.loadSettPieces(sett))
 			else
 				val piecesUri = uri"$napiUri/user/$userId/sett/${sett.id}"
-				val response = ApiRequest.sendRequest(piecesUri)
-				response.map(JsonArray(_))
+				ApiRequest.sendRequest(piecesUri)
+					.map(JsonArray(_))
 
 		piecesArray
 			.flatMap(_.value)
@@ -172,53 +172,5 @@ class NeonApi(val userName: String, val outputPath: Path, newLayout: Boolean = f
 		detailDef
 			.map(detailDef => detailDef.setFields(extractFields(piece, Array("own_count", "rarity"))))
 			.map(PieceDetail(piece, _))
-
-}
-
-object ApiRequest {
-	private val maxSequentialRequests = 10
-	private val requestSleep = 2000
-	private var requestCounter: Int = maxSequentialRequests
-
-	private val maxRetries: Int = 5
-	private val retryInterval: Int = 10
-
-	private val backend: ThreadLocal[SttpBackend[Identity, Any]] = ThreadLocal.withInitial(() => HttpClientSyncBackend())
-
-	@tailrec
-	def sendRequest(uri: Uri, retry: Int = 0): Either[String, String] =
-		checkRequestWait()
-
-		allCatch.withTry {
-			basicRequest.get(uri).send(backend.get)
-		} match
-			case Success(response) =>
-				if response.code.isSuccess then
-					response.body
-				else
-					Left(s"${response.code}: ${response.statusText}")
-			case Failure(e) =>
-				print(s"\n## Error fetching API: ${e.getMessage}. ")
-				if retry < maxRetries then
-					println(s"Retrying in $retryInterval seconds...")
-					Thread.sleep(retryInterval * 1000)
-					sendRequest(uri, retry + 1)
-				else
-					println(s"Giving up after $retry retries.")
-					Left(e.getMessage)
-
-	def downloadBinary(uri: Uri): Identity[Response[Array[Byte]]] =
-		// The assets come from cloudfront and so we will not restrict throughput
-		basicRequest
-			.get(uri)
-			.response(asByteArrayAlways)
-			.send(backend.get)
-
-	private def checkRequestWait(): Unit =
-		requestCounter -= 1
-
-		if requestCounter <= 0 then
-			Thread.sleep(requestSleep)
-			requestCounter = maxSequentialRequests
 
 }
